@@ -16,7 +16,7 @@ PORT = 5000  # منفذ السيرفر المحلي
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
-WEB_URL = "https://e5c80a3c094e3e.lhr.life"
+WEB_URL = "https://my-bot-telegram-4wy0.onrender.com"
 # ==================== إدارة البيانات ====================
 def load_participants():
     if not os.path.exists(DATA_FILE):
@@ -345,17 +345,19 @@ def callback_details(call):
             
     bot.send_message(ADMIN_ID, msg, parse_mode="Markdown")
 
-# ==================== التشغيل المتزامن ====================
-def run_flask():
-    print(f"🚀 السيرفر يعمل الآن على المنفذ {PORT} بكفاءة عالية (تزامن 40+ لاعب)...")
-    serve(app, host="0.0.0.0", port=PORT, threads=50)
+# ================= تشغيل البوت في الخلفية (علشان يشتغل بـ Render) =================
+def run_bot():
+  try:
+    print("🤖 البوت شغال وجاهز لاستقبال الأوامر...")
+    bot.infinity_polling(none_stop=True)
+  except Exception as e:
+    print(f"Bot Error: {e}")
+
+
+# تشغيل خيط البوت فور استدعاء الملف بواسطة Gunicorn على Render
+t_bot = threading.Thread(target=run_bot, daemon=True)
+t_bot.start()
 
 if __name__ == "__main__":
-    # تشغيل السيرفر في خيط مستقل
-    t = threading.Thread(target=run_flask)
-    t.daemon = True
-    t.start()
-    
-    # تشغيل البوت
-    print("🤖 البوت شغال وجاهز لاستقبال الأوامر...")
-    bot.infinity_polling()
+  print(f"🚀 السيرفر يعمل الآن على المنفذ {PORT}...")
+  serve(app, host="0.0.0.0", port=PORT, threads=50)
