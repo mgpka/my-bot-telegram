@@ -1,363 +1,143 @@
-import os
-import json
-import threading
 from datetime import datetime
-from flask import Flask, render_template_string, request, jsonify
-import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-from waitress import serve
+import json
+import os
+from flask import Flask, jsonify, redirect, render_template_string, request, url_for
 
-# ==================== الإعدادات الأساسية ====================
-BOT_TOKEN = "8675694596:AAF8F8-CqsykzYnFhBZs8s1hRNHdbANftZA"
-ADMIN_ID = 1460392381
-MAX_PARTICIPANTS = 100
-DATA_FILE = "participants.json"
-PORT = 5000  # منفذ السيرفر المحلي
+app = Flask(__name__, static_folder='static', static_url_path='/static')
+DATA_FILE = 'participants.json'
 
-bot = telebot.TeleBot(BOT_TOKEN)
-app = Flask(__name__)
-WEB_URL = "https://my-bot-telegram-4wy0.onrender.com"
-# ==================== إدارة البيانات ====================
+
+# تحميل البيانات
 def load_participants():
-    if not os.path.exists(DATA_FILE):
-        return []
-    try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return []
-
-def save_participant(user_info):
-    participants = load_participants()
-    
-    # فحص التكرار
-    for p in participants:
-        if str(p.get("id")) == str(user_info.get("id")):
-            return False, "أنت مسجل بالفعل في اللعبة!"
-            
-    # فحص الحد الأقصى (100 لاعب)
-    if len(participants) >= MAX_PARTICIPANTS:
-        return False, "عذراً، اكتمل العدد الأقصى للمشاركين (100 لاعب)!"
-        
-    user_info["date"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-    participants.append(user_info)
-    
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(participants, f, ensure_ascii=False, indent=2)
-        
-    return True, "تم تسجيلك بنجاح!"
-
-# ==================== تصميم الموقع (HTML/CSS/JS) ====================
-HTML_PAGE = """
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>الأمراء | Squid Game</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
-        body {
-            background-color: #080808;
-            color: #fff;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: space-between;
-            min-height: 100vh;
-            padding: 20px 10px;
-            overflow-x: hidden;
-        }
-        .header-title {
-            font-size: 22px;
-            font-weight: bold;
-            color: #d4af37;
-            text-shadow: 0 0 10px rgba(212, 175, 55, 0.5);
-            margin-top: 10px;
-            letter-spacing: 1px;
-            text-align: center;
-        }
-        /* كارت 3D تفاعلي */
-        .card-container {
-            perspective: 1000px;
-            width: 320px;
-            height: 200px;
-            margin: 20px 0;
-            cursor: pointer;
-        }
-        .card-3d {
-            width: 100%;
-            height: 100%;
-            position: relative;
-            transform-style: preserve-3d;
-            transition: transform 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            border-radius: 12px;
-            box-shadow: 0 10px 30px rgba(229, 9, 20, 0.3);
-        }
-        .card-3d.flipped {
-            transform: rotateY(180deg);
-        }
-        .card-face {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            backface-visibility: hidden;
-            border-radius: 12px;
-            border: 2px solid #d4af37;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
-            background: #111;
-        }
-        .card-face img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-        .card-back {
-            transform: rotateY(180deg);
-        }
-        
-        .buttons-container {
-            width: 100%;
-            max-width: 320px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            margin-bottom: 20px;
-        }
-        .btn {
-            padding: 14px;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: 0.3s;
-            text-align: center;
-        }
-        .btn-join {
-            background-color: #27ae60;
-            color: #fff;
-            box-shadow: 0 4px 15px rgba(39, 174, 96, 0.4);
-        }
-        .btn-join:active { transform: scale(0.98); }
-        .btn-leave {
-            background-color: #c0392b;
-            color: #fff;
-            box-shadow: 0 4px 15px rgba(192, 57, 43, 0.4);
-        }
-        
-        /* نافذة التأكيد Pop-up */
-        .modal-overlay {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0, 0, 0, 0.85);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 100;
-        }
-        .modal-box {
-            background: #181818;
-            border: 1px solid #d4af37;
-            padding: 20px;
-            border-radius: 12px;
-            width: 85%;
-            max-width: 300px;
-            text-align: center;
-        }
-        .modal-box p { margin-bottom: 20px; font-size: 15px; line-height: 1.5; }
-        .modal-btns { display: flex; gap: 10px; justify-content: center; }
-        .modal-btns button {
-            flex: 1; padding: 10px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;
-        }
-        .btn-yes { background: #27ae60; color: #fff; }
-        .btn-no { background: #555; color: #fff; }
-    </style>
-</head>
-<body>
-
-    <div class="header-title">الأمراء | 𝔞𝔩 𝔭𝔯𝔧𝔫𝔠𝔢𝔰</div>
-
-    <!-- بطاقة 3D -->
-    <div class="card-container" onclick="flipCard()">
-        <div class="card-3d" id="card">
-            <div class="card-face card-front">
-                <img src="/static/image1.jpg" alt="Squid Game Welcome" onerror="this.src='https://via.placeholder.com/320x200/111/d4af37?text=Welcome+Squid+Game'">
-            </div>
-            <div class="card-face card-back">
-                <img src="/static/image2.jpg" alt="Squid Game Symbols" onerror="this.src='https://via.placeholder.com/320x200/111/d4af37?text=Symbols+Circle+Triangle+Square'">
-            </div>
-        </div>
-    </div>
-
-    <!-- الأزرار السفليّة -->
-    <div class="buttons-container">
-        <button class="btn btn-join" onclick="showModal()">المشاركة</button>
-        <button class="btn btn-leave" onclick="exitApp()">عدم المشاركة</button>
-    </div>
-
-    <!-- نافذة التأكيد -->
-    <div class="modal-overlay" id="modal">
-        <div class="modal-box">
-            <p>هل أنت متأكد من أنك تريد المشاركة في هذه اللعبة؟</p>
-            <div class="modal-btns">
-                <button class="btn-yes" onclick="confirmJoin()">نعم</button>
-                <button class="btn-no" onclick="hideModal()">لا</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- صوتية Pink Soldiers (تكرارية مستمرة) -->
-    <audio id="bgAudio" loop preload="auto">
-        <source src="https://ia801503.us.archive.org/15/items/pink-soldiers-squid-game-ost/Pink%20Soldiers.mp3" type="audio/mpeg">
-    </audio>
-
-    <script>
-        const tg = window.Telegram?.WebApp;
-        if(tg) { tg.ready(); tg.expand(); }
-
-        const audio = document.getElementById("bgAudio");
-
-        // تشغيل الصوت عند أول لمسة للشاشة (لتجاوز سياسة المتصفح)
-        function startAudio() {
-            audio.play().catch(() => {});
-            document.removeEventListener('touchstart', startAudio);
-            document.removeEventListener('click', startAudio);
-        }
-        document.addEventListener('touchstart', startAudio);
-        document.addEventListener('click', startAudio);
-
-        function flipCard() {
-            document.getElementById("card").classList.toggle("flipped");
-        }
-
-        function showModal() { document.getElementById("modal").style.display = "flex"; }
-        function hideModal() { document.getElementById("modal").style.display = "none"; }
-
-        function exitApp() {
-            audio.pause();
-            if(tg) tg.close();
-            else alert("تم الخروج من الصفحة.");
-        }
-
-        function confirmJoin() {
-            const user = tg?.initDataUnsafe?.user || { id: "1460392381", first_name: "تجربة", username: "TestUser" };
-            
-            fetch('/api/join', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(user)
-            })
-            .then(res => res.json())
-            .then(data => {
-                alert(data.message);
-                if(data.success) {
-                    audio.pause();
-                    if(tg) tg.close();
-                } else {
-                    hideModal();
-                }
-            })
-            .catch(() => {
-                alert("حدث خطأ في الاتصال بالسيرفر!");
-                hideModal();
-            });
-        }
-    </script>
-</body>
-</html>
-"""
-
-@app.route('/')
-def home():
-    return render_template_string(HTML_PAGE)
-
-@app.route('/api/join', methods=['POST'])
-def api_join():
-    data = request.json or {}
-    user_info = {
-        "id": data.get("id", "غير معروف"),
-        "name": data.get("first_name", "غير معروف"),
-        "username": data.get("username", "لا يوجد")
-    }
-    
-    success, msg = save_participant(user_info)
-    
-    if success:
-        # إرسال إشعار فوري للأدمن حصراً
-        text = (
-            f"🎯 **تم مشاركة لاعب جديد!**\n\n"
-            f"👤 **الاسم:** {user_info['name']}\n"
-            f"🔗 **اليوزر:** @{user_info['username']}\n"
-            f"🆔 **الايدي:** `{user_info['id']}`\n"
-            f"📅 **الوقت:** {user_info['date']}"
-        )
-        try:
-            bot.send_message(ADMIN_ID, text, parse_mode="Markdown")
-        except Exception as e:
-            print(f"Error sending notification: {e}")
-            
-    return jsonify({"success": success, "message": msg})
-
-# ==================== بوت تليجرام ====================
-@bot.message_handler(commands=['start'])
-def handle_start(message):
-    # التأكد من أن المستخدم هو الأدمن فقط
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "عذراً، هذا البوت خاص بالإدارة فقط.")
-        return
-
-    markup = InlineKeyboardMarkup()
-    btn_count = InlineKeyboardButton("📊 عدد المشاركين التفاصيل", callback_data="show_details")
-    
-    # تحذير: يتطلب رابط HTTPS لتشغيله كـ WebApp داخل تليجرام
-    web_url = "https://e5c80a3c094e3e.lhr.life"
-    btn_site = InlineKeyboardButton("🎮 موقع المشاركة", web_app=WebAppInfo(url=web_url))
-    
-    markup.add(btn_count)
-    markup.add(btn_site)
-    
-    bot.send_message(
-        ADMIN_ID,
-        "أهلاً بك يا أدمن! التحكم الكامل باللعبة والمشاركين بين يديك الآن:",
-        reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data == "show_details")
-def callback_details(call):
-    if call.from_user.id != ADMIN_ID:
-        return
-        
-    participants = load_participants()
-    count = len(participants)
-    
-    msg = f"📊 **إجمالي المشاركين:** `{count} / {MAX_PARTICIPANTS}`\n\n"
-    if count == 0:
-        msg += "لا يوجد مشاركين حتى الآن."
-    else:
-        for i, p in enumerate(participants, 1):
-            msg += f"{i}. {p['name']} | @{p['username']} | `{p['id']}`\n   📅 {p['date']}\n"
-            
-    bot.send_message(ADMIN_ID, msg, parse_mode="Markdown")
-
-# ================= تشغيل البوت في الخلفية (علشان يشتغل بـ Render) =================
-def run_bot():
+  if not os.path.exists(DATA_FILE):
+    return []
   try:
-    print("🤖 البوت شغال وجاهز لاستقبال الأوامر...")
-    bot.infinity_polling(none_stop=True)
-  except Exception as e:
-    print(f"Bot Error: {e}")
+    with open(DATA_FILE, 'r', encoding='utf-8') as f:
+      return json.load(f)
+  except:
+    return []
 
 
-# تشغيل خيط البوت فور استدعاء الملف بواسطة Gunicorn على Render
-t_bot = threading.Thread(target=run_bot, daemon=True)
-t_bot.start()
+# حفظ البيانات
+def save_participant(name, username):
+  participants = load_participants()
+  # إضافة المشارك جديد
+  new_entry = {
+      'id': len(participants) + 1,
+      'name': name,
+      'username': (
+          username if username.startswith('@') else f'@{username}'
+      ),
+      'date': datetime.now().strftime('%Y-%m-%d %I:%M:%S %p'),
+  }
+  participants.append(new_entry)
+  with open(DATA_FILE, 'w', encoding='utf-8') as f:
+    json.dump(participants, f, ensure_ascii=False, indent=4)
 
-if __name__ == "__main__":
-  print(f"🚀 السيرفر يعمل الآن على المنفذ {PORT}...")
-  serve(app, host="0.0.0.0", port=PORT, threads=50)
+
+# 1️⃣ الصفحة الرئيسية للمستخدمين
+@app.route('/')
+def index():
+  return render_template_string("""
+    <!DOCTYPE html>
+    <html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>المشاركة في اللعبة</title>
+        <style>
+            body { font-family: Arial, sans-serif; background-color: #1a1a1a; color: #fff; text-align: center; padding: 20px; }
+            .card { background: #2a2a2a; border-radius: 12px; padding: 25px; max-width: 400px; margin: auto; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+            input { width: 90%; padding: 10px; margin: 10px 0; border-radius: 6px; border: 1px solid #444; background: #333; color: #fff; text-align: center; font-size: 16px; }
+            button { width: 95%; padding: 12px; background: #e50914; color: white; border: none; border-radius: 6px; font-size: 18px; cursor: pointer; font-weight: bold; }
+            button:hover { background: #b80710; }
+        </style>
+    </head>
+    <body>
+        <audio id="bg-music" src="/static/song.mp3" loop></audio>
+        <div class="card">
+            <h2>🎯 هل تريد المشاركة في اللعبة؟</h2>
+            <form action="/submit" method="POST">
+                <input type="text" name="name" placeholder="الاسم الكامل" required><br>
+                <input type="text" name="username" placeholder="يوزر التليجرام (مثال: @user)" required><br><br>
+                <button type="submit">نعم، أريد المشاركة 🔥</button>
+            </form>
+        </div>
+        <script>
+            document.addEventListener('click', function() {
+                var audio = document.getElementById('bg-music');
+                if (audio && audio.paused) { audio.play(); }
+            }, { once: true });
+        </script>
+    </body>
+    </html>
+    """)
+
+
+# 2️⃣ استلام البيانات عند الضغط على مشاركة
+@app.route('/submit', methods=['POST'])
+def submit():
+  name = request.form.get('name')
+  username = request.form.get('username')
+  if name and username:
+    save_participant(name, username)
+    return render_template_string("""
+            <body style="background:#1a1a1a; color:#fff; text-align:center; padding-top:50px; font-family:Arial;">
+                <h1 style="color:#4CAF50;">✅ تم تسجيل مشاركتك بنجاح!</h1>
+                <p>بالتوفيق في اللعبة 🎉</p>
+            </body>
+        """)
+  return redirect(url_for('index'))
+
+
+# 3️⃣ لوحة تحكم الأدمن (عرض القائمة الكاملة)
+@app.route('/admin')
+def admin():
+  participants = load_participants()
+  return render_template_string(
+      """
+    <!DOCTYPE html>
+    <html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8">
+        <title>قائمة المشاركين - الأدمن</title>
+        <style>
+            body { font-family: Arial, sans-serif; background-color: #121212; color: #fff; padding: 20px; }
+            table { width: 100%; max-width: 800px; margin: auto; border-collapse: collapse; background: #1e1e1e; }
+            th, td { padding: 12px; border: 1px solid #333; text-align: center; }
+            th { background: #e50914; }
+            tr:nth-child(even) { background: #2a2a2a; }
+            .count { text-align: center; font-size: 20px; margin-bottom: 20px; color: #4CAF50; }
+        </style>
+    </head>
+    <body>
+        <h2 style="text-align:center;">📊 لوحة تحكم الأدمن - قائمة المشاركين</h2>
+        <div class="count">إجمالي عدد المشاركين: <b>{{ participants|length }}</b></div>
+        <table>
+            <tr>
+                <th>#</th>
+                <th>الاسم الكامل</th>
+                <th>اليوزر</th>
+                <th>تاريخ ووقت التسجيل</th>
+            </tr>
+            {% for p in participants %}
+            <tr>
+                <td>{{ p.id }}</td>
+                <td>{{ p.name }}</td>
+                <td><a href="https://t.me/{{ p.username.replace('@', '') }}" target="_blank" style="color:#0088cc;">{{ p.username }}</a></td>
+                <td>{{ p.date }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4">لا يوجد مشاركين حتى الآن.</td></tr>
+            {% endfor %}
+        </table>
+    </body>
+    </html>
+    """,
+      participants=participants,
+  )
+
+
+if __name__ == '__main__':
+  port = int(os.environ.get('PORT', 5000))
+  app.run(host='0.0.0.0', port=port)
