@@ -2,4 +2,3 @@ Flask
 pyTelegramBotAPI
 requests
 gunicorn
-waitress
